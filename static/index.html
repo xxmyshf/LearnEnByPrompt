@@ -110,10 +110,6 @@
   .text-row.tts-active pre:hover { background: #f0f7f5; }
   .text-row.tts-active .word { cursor: pointer; border-radius: 2px; padding: 0 1px; }
   .text-row.tts-active .word:hover { background: var(--accent-bg); color: var(--accent-dark); }
-  .lang-flag-right {
-    margin-left: auto; flex: none;
-    font-size: 14px; line-height: 1;
-  }
 
   .spinner {
     width: 12px; height: 12px; flex: none;
@@ -169,13 +165,14 @@
     overflow: hidden;
   }
   .card .meta {
-    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    display: flex; align-items: center; gap: 10px;
     padding: 8px 14px;
     border-bottom: 1px solid var(--border);
     background: #fafbfc;
     font-size: 12px; color: var(--muted);
   }
   .card .meta .time { font-family: var(--mono); color: var(--text); }
+  .card .meta .spacer { flex: 1; }
   .badge {
     padding: 1px 8px; border-radius: 4px;
     font-size: 11px; font-weight: 600;
@@ -211,7 +208,24 @@
   .en {
     border-top: 1px dashed var(--border);
     background: var(--en-bg);
+    position: relative;
   }
+  .card-overlay {
+    position: absolute; top: 4px; right: 6px; z-index: 5;
+    display: flex; align-items: center; gap: 4px;
+    opacity: .4; transition: opacity .2s;
+  }
+  .en:hover .card-overlay { opacity: .85; }
+  .card-overlay .lang-chip {
+    cursor: pointer; background: rgba(255,255,255,.5);
+    font-size: 16px; padding: 2px 6px;
+  }
+  .card-overlay .lang-chip:hover { opacity: 1; background: rgba(255,255,255,.9); }
+  .card-overlay .speak-icon {
+    width: 28px; height: 28px; font-size: 18px;
+    background: rgba(255,255,255,.5); border: 1px solid var(--border);
+  }
+  .card-overlay .speak-icon:hover { background: rgba(255,255,255,.9); }
   .en .en-head {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     padding: 7px 14px;
@@ -388,11 +402,11 @@ function hasCJK(text) {
 }
 
 function speakerSvg() {
-  return '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>';
+  return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>';
 }
 
 function stopSvg() {
-  return '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+  return '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
 }
 
 function stopTtsAudio() {
@@ -455,6 +469,7 @@ async function speakText(text, btn) {
 
 function makeSpeakBtn(text) {
   const btn = el("button", "speak-icon");
+  btn.style.width = "28px"; btn.style.height = "28px";
   btn.type = "button";
   btn.title = "点击朗读";
   btn.innerHTML = speakerSvg();
@@ -606,39 +621,11 @@ function renderCard(p) {
   const card = el("article", "card");
   card.dataset.id = p.id;
 
-  /* meta row */
+  /* meta row: time only + agent right-aligned */
   const meta = el("div", "meta");
   meta.append(el("span", "time", p.time));
-  const badge = el("span", "badge " + agentClass(p.agent), p.agent);
-  meta.append(badge);
-  const sess = el("span", "session", "sess " + (p.session || "").slice(0, 12));
-  sess.title = p.session || "";
-  meta.append(sess);
-  if (p.cwd) {
-    const cwd = el("span", "cwd", p.cwd);
-    cwd.title = p.cwd;
-    meta.append(cwd);
-  }
   meta.append(el("span", "spacer"));
-  const copyBtn = el("button", "copy", "复制原文");
-  copyBtn.type = "button";
-  copyBtn.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(p.text);
-      copyBtn.textContent = "已复制";
-      setTimeout(() => (copyBtn.textContent = "复制原文"), 1200);
-    } catch {
-      copyBtn.textContent = "复制失败";
-      setTimeout(() => (copyBtn.textContent = "复制原文"), 1200);
-    }
-  });
-  meta.append(copyBtn);
-  /* TTS play button in meta row */
-  if (state.ttsEnabled) meta.append(makeSpeakBtn(p.text));
-  /* flag at far right */
-  if (p.src_lang) {
-    meta.append(el("span", "lang-chip lang-flag-right", langFlag(p.src_lang)));
-  }
+  meta.append(el("span", "badge " + agentClass(p.agent), p.agent));
   card.append(meta);
 
   /* original text */
@@ -647,7 +634,7 @@ function renderCard(p) {
   if (state.ttsEnabled) {
     origPre.append(makeWordSpans(p.text, card, "orig"));
     origPre.addEventListener("click", (e) => {
-      if (e.target === origPre) speakText(p.text, card.querySelector(".meta .speak-icon"));
+      if (e.target === origPre) speakText(p.text, card.querySelector(".card-overlay .speak-icon"));
     });
   } else {
     origPre.textContent = p.text;
@@ -655,45 +642,33 @@ function renderCard(p) {
   origRow.append(origPre);
   card.append(origRow);
 
-  /* english panel */
+  /* english panel (no head) */
   card.append(renderEnPanel(p));
   return card;
 }
 
 function renderEnPanel(p) {
   const box = el("div", "en");
-  const head = el("div", "en-head");
 
-  /* For untranslated items, translate button goes first (left side) */
-  let btnFirst = null;
-  if (!p.translation) {
-    btnFirst = el("button", "btn small", "译为" + langName(p.tgt_lang));
-    btnFirst.type = "button";
-    btnFirst.append(el("span", "spinner"));
-    btnFirst.querySelector(".spinner").hidden = true;
-    head.append(btnFirst);
+  /* floating overlay in en panel: flag (click to translate) + speak button */
+  const overlay = el("div", "card-overlay");
+  const flag = el("span", "lang-chip", langFlag(p.tgt_lang || "en"));
+  flag.title = "点击翻译";
+  flag.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const body = box.querySelector(".en-text, .empty-hint");
+    translateOne(p, box, body, null);
+  });
+  overlay.append(flag);
+  if (state.ttsEnabled) {
+    const speakBtn = el("button", "speak-icon");
+    speakBtn.type = "button";
+    speakBtn.title = "点击朗读";
+    speakBtn.innerHTML = speakerSvg();
+    speakBtn.addEventListener("click", (e) => { e.stopPropagation(); speakText(p.translation || p.text, speakBtn); });
+    overlay.append(speakBtn);
   }
-  head.append(el("span", "en-title", langName(p.tgt_lang)));
-  if (p.translation && p.translation_meta) {
-    const m = p.translation_meta;
-    const parts = [];
-    if (m.model) parts.push(m.model);
-    if (m.translated_at) parts.push(fmtTranslatedAt(m.translated_at));
-    if (m.latency_ms != null) parts.push(fmtLatency(m.latency_ms));
-    head.append(el("span", "en-meta", parts.join(" · ")));
-  }
-  head.append(el("span", "spacer"));
-
-  /* For translated items, re-translate button */
-  const btn = p.translation
-    ? el("button", "btn small", "重新翻译")
-    : null;
-  if (btn) {
-    btn.type = "button";
-    btn.append(el("span", "spinner"));
-    btn.querySelector(".spinner").hidden = true;
-  }
-  const spinner = btn ? btn.querySelector(".spinner") : null;
+  box.append(overlay);
 
   let body;
   if (p.translation) {
@@ -704,7 +679,7 @@ function renderEnPanel(p) {
       enPre.addEventListener("click", (e) => {
         if (e.target === enPre) {
           const cardEl = enPre.closest(".card");
-          speakText(p.translation, cardEl.querySelector(".en-head .speak-icon"));
+          speakText(p.translation, cardEl.querySelector(".card-overlay .speak-icon"));
         }
       });
     } else {
@@ -713,32 +688,11 @@ function renderEnPanel(p) {
     body.append(enPre);
   } else {
     body = el("div", "text-row");
-    const hint = el("div", "empty-hint", "尚未翻译 — 点击左上方按钮翻译。");
+    const hint = el("div", "empty-hint", "尚未翻译 — 点击右上角国旗翻译。");
     hint.style.flex = "1";
     body.append(hint);
   }
-
-  /* wire up translate buttons */
-  const onTranslate = () => translateOne(p, box, body, spinner);
-  if (btnFirst) btnFirst.addEventListener("click", onTranslate);
-  if (btn) {
-    btn.addEventListener("click", onTranslate);
-    head.append(btn);
-  }
-  /* speak button (translated + TTS enabled) */
-  if (p.translation && state.ttsEnabled) {
-    const speakBtn = el("button", "speak-icon");
-    speakBtn.type = "button";
-    speakBtn.title = "点击朗读";
-    speakBtn.innerHTML = speakerSvg();
-    speakBtn.addEventListener("click", (e) => { e.stopPropagation(); speakText(p.translation, speakBtn); });
-    head.append(speakBtn);
-  }
-  /* flag at far right */
-  if (p.tgt_lang) {
-    head.append(el("span", "lang-chip lang-flag-right", langFlag(p.tgt_lang)));
-  }
-  box.append(head, body);
+  box.append(body);
   return box;
 }
 
@@ -755,8 +709,7 @@ function makeWordSpans(text, card, which) {
       span.addEventListener("click", (e) => {
         e.stopPropagation();
         const cardEl = span.closest(".card");
-        const sel = which === "orig" ? ".meta .speak-icon" : ".en-head .speak-icon";
-        speakText(word, cardEl.querySelector(sel));
+        speakText(word, cardEl.querySelector(".card-overlay .speak-icon"));
       });
       frag.appendChild(span);
     }
@@ -769,11 +722,8 @@ function makeWordSpans(text, card, which) {
 
 async function translateOne(p, box, body, spinner) {
   if (state.busy) return;
-  const head = box.querySelector(".en-head");
-  const allBtns = head.querySelectorAll(".btn");
-  allBtns.forEach(b => { b.disabled = true; });
-  if (spinner) spinner.hidden = false;
-  allBtns.forEach(b => { if (b.childNodes[0]) b.childNodes[0].textContent = "翻译中…"; });
+  const flag = box.querySelector(".card-overlay .lang-chip");
+  if (flag) { flag.style.opacity = ".5"; flag.textContent = "…"; }
   showBanner("");
   try {
     const res = await fetch("/api/prompts/" + p.id + "/translate", { method: "POST" });
@@ -798,40 +748,17 @@ async function translateOne(p, box, body, spinner) {
     const enPre = el("pre", "en-text");
     const text = rec.translation || rec.en;
     if (state.ttsEnabled) {
-      const cardEl = box.closest(".card");
-      enPre.append(makeWordSpans(text, cardEl, "en"));
+      enPre.append(makeWordSpans(text, box.closest(".card"), "en"));
       enPre.addEventListener("click", (e) => {
-        if (e.target === enPre) speakText(text, cardEl.querySelector(".en-head .speak-icon"));
+        if (e.target === enPre) speakText(text, box.querySelector(".card-overlay .speak-icon"));
       });
     } else {
       enPre.textContent = text;
     }
     newBody.append(enPre);
     body.replaceWith(newBody);
-    /* rebuild head: remove translate-first button, add re-translate + meta + speak */
-    head.innerHTML = "";
-    head.append(el("span", "en-title", langName(p.tgt_lang)));
-    const parts = [];
-    if (rec.model) parts.push(rec.model);
-    if (rec.translated_at) parts.push(fmtTranslatedAt(rec.translated_at));
-    if (rec.latency_ms != null) parts.push(fmtLatency(rec.latency_ms));
-    head.append(el("span", "en-meta", parts.join(" · ")));
-    head.append(el("span", "spacer"));
-    const retryBtn = el("button", "btn small", "重新翻译");
-    retryBtn.type = "button";
-    retryBtn.append(el("span", "spinner"));
-    retryBtn.querySelector(".spinner").hidden = true;
-    retryBtn.addEventListener("click", () => translateOne(p, box, newBody, retryBtn.querySelector(".spinner")));
-    head.append(retryBtn);
-    if (state.ttsEnabled) {
-      const speakBtn = el("button", "speak-icon");
-      speakBtn.type = "button";
-      speakBtn.title = "点击朗读";
-      speakBtn.innerHTML = speakerSvg();
-      speakBtn.addEventListener("click", (e) => { e.stopPropagation(); speakText(text, speakBtn); });
-      head.append(speakBtn);
-    }
-    if (p.tgt_lang) head.append(el("span", "lang-chip lang-flag-right", langFlag(p.tgt_lang)));
+    /* restore flag */
+    if (flag) { flag.textContent = langFlag(p.tgt_lang || "en"); flag.style.opacity = ""; }
     /* refresh translate-all counter */
     if (state.data) {
       const pending = state.data.prompts.filter((x) => !x.translation).length;
@@ -843,10 +770,7 @@ async function translateOne(p, box, body, spinner) {
     }
   } catch (err) {
     showBanner("翻译失败: " + err.message);
-    allBtns.forEach(b => { if (b.childNodes[0]) b.childNodes[0].textContent = "重试翻译"; });
-  } finally {
-    allBtns.forEach(b => { b.disabled = false; });
-    if (spinner) spinner.hidden = true;
+    if (flag) { flag.textContent = langFlag(p.tgt_lang || "en"); flag.style.opacity = ""; }
   }
 }
 
@@ -865,14 +789,9 @@ async function translateAll() {
     allBtn.textContent = "翻译中 " + (done + 1) + "/" + pending.length + "…";
     const card = document.querySelector('.card[data-id="' + p.id + '"]');
     const box = card ? card.querySelector(".en") : null;
-    const btns = box ? box.querySelectorAll(".en-head .btn") : [];
-    const spinner = box ? box.querySelector(".en-head .btn .spinner") : null;
     const bodyEl = box ? box.querySelector(".en-text, .empty-hint") : null;
-    if (btns.length) {
-      btns.forEach(b => { b.disabled = true; });
-      if (spinner) spinner.hidden = false;
-      btns.forEach(b => { if (b.childNodes[0]) b.childNodes[0].textContent = "翻译中…"; });
-    }
+    const flag = box ? box.querySelector(".card-overlay .lang-chip") : null;
+    if (flag) { flag.style.opacity = ".5"; flag.textContent = "…"; }
     try {
       const res = await fetch("/api/prompts/" + p.id + "/translate", { method: "POST" });
       if (!res.ok) throw new Error("HTTP " + res.status);
@@ -891,46 +810,20 @@ async function translateAll() {
         if (state.ttsEnabled) {
           enPre.append(makeWordSpans(text, card, "en"));
           enPre.addEventListener("click", (e) => {
-            if (e.target === enPre) speakText(text, card.querySelector(".en-head .speak-icon"));
+            if (e.target === enPre) speakText(text, card.querySelector(".card-overlay .speak-icon"));
           });
         } else {
           enPre.textContent = text;
         }
         newBody.append(enPre);
-        /* rebuild head */
-        const head = box.querySelector(".en-head");
-        head.innerHTML = "";
-        head.append(el("span", "en-title", langName(p.tgt_lang)));
-        const parts = [];
-        if (rec.model) parts.push(rec.model);
-        if (rec.translated_at) parts.push(fmtTranslatedAt(rec.translated_at));
-        if (rec.latency_ms != null) parts.push(fmtLatency(rec.latency_ms));
-        head.append(el("span", "en-meta", parts.join(" · ")));
-        head.append(el("span", "spacer"));
-        const retryBtn = el("button", "btn small", "重新翻译");
-        retryBtn.type = "button";
-        retryBtn.append(el("span", "spinner"));
-        retryBtn.querySelector(".spinner").hidden = true;
-        retryBtn.addEventListener("click", () => translateOne(p, box, newBody, retryBtn.querySelector(".spinner")));
-        head.append(retryBtn);
-        if (state.ttsEnabled) {
-          const speakBtn = el("button", "speak-icon");
-          speakBtn.type = "button";
-          speakBtn.title = "点击朗读";
-          speakBtn.innerHTML = speakerSvg();
-          speakBtn.addEventListener("click", (e) => { e.stopPropagation(); speakText(text, speakBtn); });
-          head.append(speakBtn);
-        }
-        if (p.tgt_lang) head.append(el("span", "lang-chip lang-flag-right", langFlag(p.tgt_lang)));
         bodyEl.replaceWith(newBody);
       }
       done++;
     } catch (err) {
       failed++;
-      btns.forEach(b => { if (b.childNodes[0]) b.childNodes[0].textContent = "重试翻译"; });
+      if (flag) { flag.textContent = langFlag(p.tgt_lang || "en"); flag.style.opacity = ""; }
     } finally {
-      btns.forEach(b => { b.disabled = false; });
-      if (spinner) spinner.hidden = true;
+      if (flag) { flag.style.opacity = ""; }
     }
   }
 
@@ -950,12 +843,13 @@ async function loadFooter() {
     if (!res.ok) return;
     const h = await res.json();
     const t = h.translate || {};
-    const model = t.models && t.models.length ? t.models[0] : "未知";
+    const model = t.model || "未知";
     const status = t.ok ? "在线" : "不可达";
     const tts = h.tts || {};
     const ttsStatus = tts.ok ? "TTS 在线" : tts.running ? "TTS 启动中" : "TTS 未启动";
+    const prompts = h.recorded_prompts || 0;
     $("#footer").textContent =
-      "翻译服务 " + status + " · 模型 " + model + " · 已记录翻译 " + h.recorded_translations + " 条";
+      "翻译服务 " + status + " · 模型 " + model + " · 已收集 " + prompts + " 条 · 已翻译 " + h.recorded_translations + " 条";
     $("#footer").textContent += " · " + ttsStatus;
   } catch {
     $("#footer").textContent = "";

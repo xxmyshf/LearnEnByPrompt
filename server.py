@@ -5,25 +5,25 @@ server.py -- AI Agent 提示词收集 Web 服务。
 功能:
   * 复用 collect_prompts.py 的收集器, 在 Web 上按 天/周/月/全部 刷新收集
   * 查看收集结果 (按天分组, 含 agent / 会话 / 工作目录)
-  * 调用 LLM (OpenAI 兼容 chat/completions 接口) 生成用户提示词的英文对照,
+  * 调用本地 T5 翻译模型 (utrobinmv/t5_translate_en_ru_zh_small_1024) 生成用户提示词的中英文对照,
     翻译结果持久化记录到 data/translations.json, 调用日志追加到 data/translate_log.jsonl
+  * 翻译服务随主服务自动启动, 无需外部 API
 
 启动:
-  uv run server.py                 # 默认 127.0.0.1:8030
+  uv run server.py                 # 默认 127.0.0.1:8030, 自动启动本地翻译服务
   PORT=9000 uv run server.py       # 自定义端口
 
 环境变量:
   PORT             监听端口 (默认 8030)
-  TRANSLATE_URL    翻译接口地址 (默认 http://172.25.92.88:18080/v1/chat/completions)
-  TRANSLATE_MODEL  指定模型名; 缺省时自动从 /v1/models 获取第一个模型
-  TRANSLATE_TIMEOUT 翻译请求超时秒数 (默认 180)
-  TRANSLATE_API_KEY API 密钥 (可选, 用于需要认证的接口)
-  TRANSLATE_MAX_TOKENS 单次请求最大 token 数 (默认 4096)
-  TRANSLATE_TEMPERATURE 翻译温度 (默认 0.1)
   HOST             监听地址 (默认 127.0.0.1)
+  TRANSLATE_PORT   本地翻译服务端口 (默认 8053)
+  TRANSLATE_MODEL_NAME T5 模型名 (默认 utrobinmv/t5_translate_en_ru_zh_small_1024)
+  TRANSLATE_CPU    强制 CPU 推理 (默认 1)
+  TRANSLATE_TIMEOUT 翻译请求超时秒数 (默认 120)
+  TTS_PORT         TTS 服务端口 (默认 8052)
 
 配置文件:
-  config.json 项目根目录下的 JSON 配置文件, 包含翻译 API、服务器和 TTS 设置。
+  config.json 项目根目录下的 JSON 配置文件, 包含翻译、服务器和 TTS 设置。
   环境变量优先级高于配置文件; 若 config.json 不存在则使用内置默认值。
   可参考 config.example.json 创建自己的 config.json。
 """
@@ -64,6 +64,8 @@ STATIC_DIR = BASE_DIR / "static"
 DATA_DIR = BASE_DIR / "data"
 TRANSLATIONS_FILE = DATA_DIR / "translations.json"
 TRANSLATE_LOG = DATA_DIR / "translate_log.jsonl"
+PROMPTS_FILE = DATA_DIR / "prompts.json"
+COLLECT_LOG = DATA_DIR / "collect_log.jsonl"
 
 # Load config.json (env vars override file values)
 _CONFIG_FILE = BASE_DIR / "config.json"
@@ -74,17 +76,18 @@ if _CONFIG_FILE.exists():
 _tcfg = _cfg.get("translate", {})
 _scfg = _cfg.get("server", {})
 _ttscfg = _cfg.get("tts", {})
+_ltcfg = _cfg.get("local_translate", {})
 
-TRANSLATE_URL = os.environ.get(
-    "TRANSLATE_URL", _tcfg.get("url", "http://172.25.92.88:18080/v1/chat/completions")
+LOCAL_TRANSLATE_ENABLED = _ltcfg.get("enabled", True)
+LOCAL_TRANSLATE_PORT = int(os.environ.get("TRANSLATE_PORT", _ltcfg.get("port", 8053)))
+LOCAL_TRANSLATE_MODEL = os.environ.get(
+    "TRANSLATE_MODEL_NAME",
+    _ltcfg.get("model_name", "utrobinmv/t5_translate_en_ru_zh_small_1024"),
 )
-# OpenAI 兼容 API 的 base (由 completions 地址反推, 用于 /v1/models 等)
-API_BASE = TRANSLATE_URL.rsplit("/chat/completions", 1)[0]
-MODEL_OVERRIDE = os.environ.get("TRANSLATE_MODEL", _tcfg.get("model", ""))
-TRANSLATE_API_KEY = os.environ.get("TRANSLATE_API_KEY", _tcfg.get("api_key", ""))
-TRANSLATE_TIMEOUT = float(os.environ.get("TRANSLATE_TIMEOUT", _tcfg.get("timeout", 180)))
-TRANSLATE_MAX_TOKENS = int(os.environ.get("TRANSLATE_MAX_TOKENS", _tcfg.get("max_tokens", 4096)))
-TRANSLATE_TEMPERATURE = float(os.environ.get("TRANSLATE_TEMPERATURE", _tcfg.get("temperature", 0.1)))
+LOCAL_TRANSLATE_CPU = "1" if _ltcfg.get("cpu_only", True) else "0"
+TRANSLATE_PY = BASE_DIR / "translate_server.py"
+TRANSLATE_URL = f"http://127.0.0.1:{LOCAL_TRANSLATE_PORT}"
+TRANSLATE_TIMEOUT = float(os.environ.get("TRANSLATE_TIMEOUT", 120))
 DEFAULT_PORT = int(os.environ.get("PORT", _scfg.get("port", 8030)))
 DEFAULT_HOST = os.environ.get("HOST", _scfg.get("host", "127.0.0.1"))
 TTS_PORT = int(os.environ.get("TTS_PORT", _ttscfg.get("port", 8052)))
@@ -92,23 +95,6 @@ MATCHA_DIR = BASE_DIR / "Matcha-TTS"
 TTS_PY = BASE_DIR / "tts_server.py"
 TTS_VENV_PY = MATCHA_DIR / ".venv" / "bin" / "python"
 TTS_URL = f"http://127.0.0.1:{TTS_PORT}"
-
-SYSTEM_PROMPT_ZH2EN = _tcfg.get(
-    "system_prompt_zh2en",
-    "You are a professional translator. Translate the user's text into "
-    "natural, fluent English. Output ONLY the translation itself: no "
-    "explanations, no quotation marks, no prefixes. Keep code snippets, "
-    "file paths, shell commands, URLs and technical identifiers exactly as "
-    "they are. If the text is already in English, output it unchanged.",
-)
-
-SYSTEM_PROMPT_EN2ZH = _tcfg.get(
-    "system_prompt_en2zh",
-    "你是一位专业翻译。将用户的文本翻译成自然、流畅的简体中文。"
-    "只输出译文本身: 不要解释、不要引号、不要前缀。"
-    "保持代码片段、文件路径、shell 命令、URL 和技术标识符原样不变。"
-    "如果文本已经是中文, 则原样输出。",
-)
 
 app = FastAPI(title="Prompt Collector", version="1.0.0")
 
@@ -172,7 +158,95 @@ class TranslationStore:
             self._save()
 
 
+    def clear(self) -> int:
+        with self._lock:
+            n = len(self._records)
+            self._records = {}
+            self._save()
+            return n
+
 store = TranslationStore(TRANSLATIONS_FILE)
+
+
+class PromptStore:
+    """收集的提示词数据持久化存储, 带线程锁。"""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self._lock = threading.Lock()
+        self._records: dict[str, dict[str, Any]] = {}
+        self._last_collected: str = ""
+        self._load()
+
+    def _load(self) -> None:
+        if self.path.exists():
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    self._records = data.get("prompts", {})
+                    self._last_collected = data.get("last_collected", "")
+            except (json.JSONDecodeError, OSError):
+                self._records = {}
+
+    def _save(self) -> None:
+        """原子写: 先写临时文件再 rename (调用方需持有锁)。"""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text(
+            json.dumps(
+                {"last_collected": self._last_collected, "prompts": self._records},
+                ensure_ascii=False, indent=1,
+            ),
+            encoding="utf-8",
+        )
+        tmp.replace(self.path)
+
+    def put_all(self, prompts: list[dict[str, Any]]) -> int:
+        """批量保存收集结果, 返回新增/更新的数量。"""
+        with self._lock:
+            changed = 0
+            for p in prompts:
+                pid = p["id"]
+                if pid not in self._records or self._records[pid].get("text") != p.get("text"):
+                    changed += 1
+                self._records[pid] = p
+            self._last_collected = _now_iso()
+            self._save()
+            return changed
+
+    def get(self, pid: str) -> dict[str, Any] | None:
+        with self._lock:
+            return dict(self._records[pid]) if pid in self._records else None
+
+    def all(self) -> dict[str, dict[str, Any]]:
+        with self._lock:
+            return {k: dict(v) for k, v in self._records.items()}
+
+    @property
+    def last_collected(self) -> str:
+        return self._last_collected
+
+    def clear(self) -> int:
+        with self._lock:
+            n = len(self._records)
+            self._records = {}
+            self._last_collected = ""
+            self._save()
+            return n
+
+prompt_store = PromptStore(PROMPTS_FILE)
+
+
+def _log_collect(entry: dict[str, Any]) -> None:
+    """收集调用日志, 追加写入 JSONL。"""
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        entry = {"logged_at": _now_iso(), **entry}
+        with COLLECT_LOG.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
 
 # 每个 prompt 一把锁, 避免同一提示词被并发重复翻译
 _PID_LOCKS: dict[str, threading.Lock] = {}
@@ -304,7 +378,90 @@ class TTSManager:
         return {"ok": False, "running": True, "status": "starting"}
 
 
+class TranslateManager:
+    """Manages the local T5 translation subprocess lifecycle."""
+
+    def __init__(self):
+        self._proc: subprocess.Popen | None = None
+        self._lock = threading.Lock()
+
+    @property
+    def running(self) -> bool:
+        return self._proc is not None and self._proc.poll() is None
+
+    def start(self) -> dict[str, Any]:
+        with self._lock:
+            if self.running:
+                return {"ok": True, "status": "already_running"}
+            if not TRANSLATE_PY.exists():
+                raise HTTPException(500, f"Translate server script not found: {TRANSLATE_PY}")
+            venv_py = BASE_DIR / ".venv" / "bin" / "python"
+            if not venv_py.exists():
+                raise HTTPException(500, f"Python venv not found: {venv_py}")
+            env = os.environ.copy()
+            env["TRANSLATE_PORT"] = str(LOCAL_TRANSLATE_PORT)
+            env["TRANSLATE_MODEL_NAME"] = LOCAL_TRANSLATE_MODEL
+            env["TRANSLATE_CPU"] = LOCAL_TRANSLATE_CPU
+            self._proc = subprocess.Popen(
+                [str(venv_py), str(TRANSLATE_PY)],
+                cwd=str(BASE_DIR),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        # Wait for the translate server to become healthy
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            if not self.running:
+                out = ""
+                if self._proc and self._proc.stdout:
+                    try:
+                        out = self._proc.stdout.read()[-2000:]
+                    except Exception:
+                        pass
+                raise HTTPException(500, f"Translate process exited early: {out}")
+            try:
+                r = httpx.get(f"{TRANSLATE_URL}/health", timeout=5)
+                if r.status_code == 200:
+                    return {"ok": True, "status": "started"}
+            except Exception:
+                pass
+            time.sleep(2)
+        raise HTTPException(504, "Translate server did not become healthy within 2 minutes")
+
+    def stop(self) -> dict[str, Any]:
+        with self._lock:
+            if not self.running:
+                self._proc = None
+                return {"ok": True, "status": "not_running"}
+            try:
+                self._proc.send_signal(signal.SIGTERM)
+                self._proc.wait(timeout=10)
+            except Exception:
+                try:
+                    self._proc.kill()
+                except Exception:
+                    pass
+            self._proc = None
+            return {"ok": True, "status": "stopped"}
+
+    def health(self) -> dict[str, Any]:
+        if not self.running:
+            return {"ok": False, "running": False}
+        try:
+            r = httpx.get(f"{TRANSLATE_URL}/health", timeout=5)
+            if r.status_code == 200:
+                data = r.json()
+                return {"ok": True, "running": True, **data}
+        except Exception:
+            pass
+        return {"ok": False, "running": True, "status": "starting"}
+
+
 tts_manager = TTSManager()
+translate_manager = TranslateManager()
 
 # ---------------------------------------------------------------------------
 # 提示词 id / 收集
@@ -364,68 +521,18 @@ def collect_filtered(rng: str) -> tuple[list[Prompt], str, list[str]]:
 # LLM 翻译
 # ---------------------------------------------------------------------------
 
-_models_lock = threading.Lock()
-_models_cache: list[str] | None = None
-
-
-def _resolve_models() -> list[str]:
-    """从 /v1/models 获取模型列表 (成功后缓存; 失败不缓存, 下次重试)。"""
-    global _models_cache
-    with _models_lock:
-        if _models_cache is not None:
-            return _models_cache
-    _hdrs = {}
-    if TRANSLATE_API_KEY:
-        _hdrs["Authorization"] = f"Bearer {TRANSLATE_API_KEY}"
-    try:
-        resp = httpx.get(f"{API_BASE}/models", timeout=10, headers=_hdrs)
-        resp.raise_for_status()
-        data = resp.json()
-        items = data.get("data") or data.get("models") or []
-        models = [m.get("id") or m.get("name") for m in items if isinstance(m, dict)]
-        models = [m for m in models if m]
-    except Exception:
-        models = []
-    with _models_lock:
-        if models:
-            _models_cache = models
-    return models
-
-
-def _resolve_model() -> str:
-    if MODEL_OVERRIDE:
-        return MODEL_OVERRIDE
-    models = _resolve_models()
-    if not models:
-        raise HTTPException(
-            502,
-            f"Cannot discover model from {API_BASE}/models; "
-            f"set TRANSLATE_MODEL explicitly.",
-        )
-    return models[0]
-
-
 def _call_llm(pid: str, agent: str, ts_iso: str, text: str) -> dict[str, Any]:
-    """调用翻译接口并落盘记录, 返回记录 dict。中英文互译: 自动检测源语言, 翻译成对方语言。"""
+    """调用本地 T5 翻译服务并落盘记录, 返回记录 dict。中英文互译: 自动检测源语言, 翻译成对方语言。"""
     src_lang = detect_lang(text)
     tgt_lang = "en" if src_lang == "zh" else "zh"
-    system_prompt = SYSTEM_PROMPT_ZH2EN if src_lang == "zh" else SYSTEM_PROMPT_EN2ZH
-    model = _resolve_model()
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": text},
-        ],
-        "max_tokens": TRANSLATE_MAX_TOKENS,
-        "temperature": TRANSLATE_TEMPERATURE,
-    }
-    _hdrs = {"Content-Type": "application/json"}
-    if TRANSLATE_API_KEY:
-        _hdrs["Authorization"] = f"Bearer {TRANSLATE_API_KEY}"
+    model = LOCAL_TRANSLATE_MODEL
     started = time.monotonic()
     try:
-        resp = httpx.post(TRANSLATE_URL, json=payload, timeout=TRANSLATE_TIMEOUT, headers=_hdrs)
+        resp = httpx.get(
+            f"{TRANSLATE_URL}/translate",
+            params={"text": text, "target_lang": tgt_lang},
+            timeout=TRANSLATE_TIMEOUT,
+        )
     except httpx.HTTPError as exc:
         latency = round((time.monotonic() - started) * 1000, 1)
         _log_translate({
@@ -448,17 +555,14 @@ def _call_llm(pid: str, agent: str, ts_iso: str, text: str) -> dict[str, Any]:
 
     try:
         data = resp.json()
-        message = data["choices"][0]["message"]
-    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        translation = data.get("translation", "").strip()
+    except (ValueError, KeyError, TypeError) as exc:
         _log_translate({
             "ok": False, "prompt_id": pid, "model": model,
             "error": f"malformed response: {exc}", "latency_ms": latency,
         })
         raise HTTPException(502, "Malformed translation response") from exc
 
-    # 思考型模型 (如 Qwen3) 把思考过程放在 reasoning_content,
-    # 正式回答在 content; content 为空时回退到 reasoning_content。
-    translation = (message.get("content") or message.get("reasoning_content") or "").strip()
     if not translation:
         _log_translate({
             "ok": False, "prompt_id": pid, "model": model,
@@ -476,14 +580,13 @@ def _call_llm(pid: str, agent: str, ts_iso: str, text: str) -> dict[str, Any]:
         "model": model,
         "translated_at": _now_iso(),
         "latency_ms": latency,
-        "usage": data.get("usage"),
     }
     store.put(pid, record)
     _log_translate({
         "ok": True, "prompt_id": pid, "agent": agent, "model": model,
         "src_lang": src_lang, "tgt_lang": tgt_lang,
         "text_chars": len(text), "translation_chars": len(translation),
-        "latency_ms": latency, "usage": data.get("usage"),
+        "latency_ms": latency,
     })
     return record
 
@@ -495,21 +598,12 @@ def _call_llm(pid: str, agent: str, ts_iso: str, text: str) -> dict[str, Any]:
 @app.get("/api/health")
 def api_health() -> dict[str, Any]:
     """健康检查: 服务状态 + 翻译服务可达性。"""
-    models: list[str] = []
-    translate_ok = False
-    try:
-        models = _resolve_models()
-        translate_ok = bool(models)
-    except Exception:
-        pass
     return {
         "ok": True,
-        "translate": {
-            "url": TRANSLATE_URL,
-            "ok": translate_ok,
-            "models": models,
-        },
+        "translate": translate_manager.health(),
         "recorded_translations": len(store._records),
+        "recorded_prompts": len(prompt_store.all()),
+        "last_collected": prompt_store.last_collected,
         "tts": tts_manager.health(),
     }
 
@@ -525,6 +619,7 @@ def api_prompts(
     by_agent: dict[str, int] = {}
     by_day: dict[str, int] = {}
     items: list[dict[str, Any]] = []
+    all_items: list[dict[str, Any]] = []
     for p in filtered:
         pid = prompt_id(p.agent, p.session, p.text)
         rec = store.get(pid)
@@ -534,7 +629,7 @@ def api_prompts(
         by_day[day] = by_day.get(day, 0) + 1
         src_lang = (rec.get("src_lang") if rec else None) or detect_lang(p.text)
         tgt_lang = "en" if src_lang == "zh" else "zh"
-        items.append({
+        item = {
             "id": pid,
             "agent": p.agent,
             "ts": local.isoformat(),
@@ -555,6 +650,16 @@ def api_prompts(
                 if rec
                 else None
             ),
+        }
+        items.append(item)
+        all_items.append({k: v for k, v in item.items() if k != "translation"})
+
+    # Persist collected prompts to data/prompts.json
+    if all_items:
+        changed = prompt_store.put_all(all_items)
+        _log_collect({
+            "range": rng, "total": len(items), "changed": changed,
+            "warnings": len(warnings),
         })
 
     return {
@@ -620,6 +725,59 @@ def api_translations() -> dict[str, Any]:
     return {"total": len(records), "records": records}
 
 
+@app.get("/api/collected")
+def api_collected() -> dict[str, Any]:
+    """已收集的全部提示词 (持久化记录)。"""
+    records = prompt_store.all()
+    return {"total": len(records), "last_collected": prompt_store.last_collected, "records": records}
+
+
+# ---------------------------------------------------------------------------
+# Data API
+# ---------------------------------------------------------------------------
+
+@app.post("/api/data/clear")
+def api_data_clear(
+    target: str = Query("all", pattern="^(all|prompts|translations|logs)$"),
+) -> dict[str, Any]:
+    """清空数据: all=全部, prompts=收集记录, translations=翻译记录, logs=日志文件。"""
+    results: dict[str, int] = {}
+    if target in ("all", "prompts"):
+        results["prompts_cleared"] = prompt_store.clear()
+    if target in ("all", "translations"):
+        results["translations_cleared"] = store.clear()
+    if target in ("all", "logs"):
+        n = 0
+        for log_file in (TRANSLATE_LOG, COLLECT_LOG):
+            if log_file.exists():
+                log_file.unlink()
+                n += 1
+        results["logs_cleared"] = n
+    return {"ok": True, "target": target, "results": results}
+
+
+# ---------------------------------------------------------------------------
+# Translate API
+# ---------------------------------------------------------------------------
+
+@app.post("/api/translate/start")
+def api_translate_start() -> dict[str, Any]:
+    """Start the local T5 translation subprocess."""
+    return translate_manager.start()
+
+
+@app.post("/api/translate/stop")
+def api_translate_stop() -> dict[str, Any]:
+    """Stop the local translation subprocess."""
+    return translate_manager.stop()
+
+
+@app.get("/api/translate/status")
+def api_translate_status() -> dict[str, Any]:
+    """Check translation service status."""
+    return translate_manager.health()
+
+
 # ---------------------------------------------------------------------------
 # TTS API
 # ---------------------------------------------------------------------------
@@ -670,7 +828,20 @@ def main() -> None:
     import uvicorn
 
     print(f"Prompt collector web service: http://{args.host}:{args.port}")
-    print(f"Translation endpoint: {TRANSLATE_URL}")
+    if LOCAL_TRANSLATE_ENABLED:
+        print(f"Starting local translation service on port {LOCAL_TRANSLATE_PORT} (async)...")
+
+        def _start_translate() -> None:
+            try:
+                translate_manager.start()
+                print(f"Translation endpoint: {TRANSLATE_URL}")
+            except HTTPException as exc:
+                print(f"Warning: failed to start translation service: {exc.detail}")
+            except Exception as exc:
+                print(f"Warning: failed to start translation service: {exc}")
+
+        t = threading.Thread(target=_start_translate, daemon=True)
+        t.start()
     uvicorn.run(app, host=args.host, port=args.port)
 
 

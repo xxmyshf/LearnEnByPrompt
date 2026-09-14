@@ -8,4 +8,10 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Config (contains secrets)
 config.json
+
+# Runtime data (generated, not tracked)
+data/*
+!data/.gitkeep

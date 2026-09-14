@@ -67,7 +67,7 @@ fi
 
 cd "$PROJECT_ROOT"
 "$UV" pip install --python .venv/bin/python \
-    fastapi httpx "uvicorn[standard]"
+    fastapi httpx "uvicorn[standard]" transformers sentencepiece protobuf tiktoken torch
 
 if $DEV_MODE; then
     info "安装开发依赖..."
@@ -110,6 +110,9 @@ echo "主项目:"
 verify_import "$PROJECT_ROOT/.venv/bin/python" "fastapi"
 verify_import "$PROJECT_ROOT/.venv/bin/python" "uvicorn"
 verify_import "$PROJECT_ROOT/.venv/bin/python" "httpx"
+verify_import "$PROJECT_ROOT/.venv/bin/python" "torch"
+verify_import "$PROJECT_ROOT/.venv/bin/python" "transformers"
+verify_import "$PROJECT_ROOT/.venv/bin/python" "sentencepiece"
 
 echo "Matcha-TTS:"
 verify_import "$SUBMODULE_DIR/.venv/bin/python" "numpy"
