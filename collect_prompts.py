@@ -19,13 +19,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 HOME = Path.home()
 
@@ -342,6 +343,292 @@ class ClaudeCodeCollector(AgentCollector):
 
 
 # ---------------------------------------------------------------------------
+# Antigravity 收集器 -- 读取 ~/.gemini/antigravity/ 下的会话数据库
+# ---------------------------------------------------------------------------
+
+# Antigravity 的 step_type=14 对应 CORTEX_STEP_TYPE_USER_INPUT。
+# 会话数据以 SQLite 数据库形式存储, 步骤内容为 protobuf 序列化的 BLOB。
+# 用户输入文本位于 step_payload 顶层的 field 19 > field 2 中。
+_AG_USER_INPUT_STEP = 14
+
+
+def _pb_read_varint(data: bytes, i: int) -> tuple[int, int]:
+    """读取 protobuf varint, 返回 (值, 下一个字节位置)。"""
+    result = 0
+    shift = 0
+    while i < len(data):
+        b = data[i]
+        result |= (b & 0x7F) << shift
+        i += 1
+        if not (b & 0x80):
+            break
+        shift += 7
+    return result, i
+
+
+def _pb_parse_fields(data: bytes) -> dict[int, list[tuple[int, Any]]]:
+    """解析 protobuf wire format, 返回 {字段号: [(wire_type, 值), ...]}。
+
+    仅处理 varint (0) 和 length-delimited (2) 两种 wire type;
+    32-bit (5) 和 64-bit (1) 跳过定长字节。解析失败时返回已解析部分。
+    """
+    fields: dict[int, list[tuple[int, Any]]] = {}
+    i = 0
+    while i < len(data):
+        try:
+            tag, i = _pb_read_varint(data, i)
+            fn = tag >> 3
+            wt = tag & 0x07
+            if wt == 0:
+                val, i = _pb_read_varint(data, i)
+            elif wt == 2:
+                length, i = _pb_read_varint(data, i)
+                if i + length > len(data):
+                    break
+                val = data[i:i + length]
+                i += length
+            elif wt == 5:
+                val = data[i:i + 4]
+                i += 4
+            elif wt == 1:
+                val = data[i:i + 8]
+                i += 8
+            else:
+                break
+            fields.setdefault(fn, []).append((wt, val))
+        except (IndexError, ValueError):
+            break
+    return fields
+
+
+def _pb_get_bytes(fields: dict[int, list], fn: int) -> bytes | None:
+    """取指定字段号的第一个 length-delimited 值。"""
+    if fn in fields:
+        for wt, v in fields[fn]:
+            if wt == 2:
+                return v  # type: ignore[return-value]
+    return None
+
+
+def _pb_get_varint(fields: dict[int, list], fn: int) -> int:
+    """取指定字段号的第一个 varint 值, 找不到返回 0。"""
+    if fn in fields:
+        for wt, v in fields[fn]:
+            if wt == 0:
+                return v  # type: ignore[return-value]
+    return 0
+
+
+class AntigravityCollector(AgentCollector):
+    """读取 ~/.gemini/antigravity/conversations/*.db。
+
+    Google Antigravity (IDE + CLI `agy`) 将会话以 SQLite 数据库形式存储,
+    每个会话一个 .db 文件, 文件名为会话 UUID。
+
+    steps 表中 step_type=14 (CORTEX_STEP_TYPE_USER_INPUT) 的条目包含用户输入;
+    step_payload 列是 protobuf 序列化的 BLOB, 结构为:
+      - 顶层 field 1 (varint): step_type
+      - 顶层 field 5 (bytes): 元数据, 内含时间戳和会话 UUID
+          - field 1 (bytes): 时间戳对
+              - field 1 (varint): Unix 秒级时间戳
+          - field 20 (bytes): 会话上下文
+              - field 4 (bytes): 会话 UUID
+      - 顶层 field 19 (bytes): 用户输入载荷
+          - field 2 (bytes): 用户输入文本 (UTF-8)
+          - field 3 (bytes): 用户输入文本的副本 (嵌套在 field 1 中)
+
+    工作目录从 conversation_summaries.db 的 workspace_uris 字段获取,
+    或从 conversation_metadata.json 缓存文件获取。
+    """
+
+    def __init__(self):
+        super().__init__(name="Antigravity")
+        self.ag_dir = HOME / ".gemini" / "antigravity"
+        self.convs_dir = self.ag_dir / "conversations"
+        self.cli_dir = HOME / ".gemini" / "antigravity-cli"
+
+    def collect(self) -> list[Prompt]:
+        """扫描所有会话数据库, 提取 step_type=14 中的用户输入文本。"""
+        if not self.convs_dir.exists():
+            return []
+
+        # 预加载工作目录映射 {conversation_id: cwd}
+        cwd_map = self._load_cwd_map()
+
+        out: list[Prompt] = []
+        for db_path in sorted(self.convs_dir.glob("*.db")):
+            conv_id = db_path.stem
+            try:
+                prompts = self._from_db(db_path, conv_id, cwd_map)
+                out.extend(prompts)
+            except Exception:
+                continue  # 单个数据库损坏不影响其他
+        return out
+
+    def _load_cwd_map(self) -> dict[str, str]:
+        """从 conversation_summaries.db 或 conversation_metadata.json
+        构建 {conversation_id: cwd_path} 映射。"""
+        cwd_map: dict[str, str] = {}
+
+        # 优先从 conversation_summaries.db 读取
+        summaries_db = self.cli_dir / "conversation_summaries.db"
+        if summaries_db.exists():
+            try:
+                conn = sqlite3.connect(
+                    f"file:{summaries_db}?immutable=1", uri=True)
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT conversation_id, workspace_uris "
+                    "FROM conversation_summaries")
+                for cid, ws in cur.fetchall():
+                    cwd_map[cid] = self._uri_to_path(ws)
+                conn.close()
+            except Exception:
+                pass
+
+        # 补充: 从 conversation_metadata.json 读取
+        meta_path = self.cli_dir / "cache" / "conversation_metadata.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(
+                    meta_path.read_text(encoding="utf-8", errors="replace"))
+                for cid, info in meta.get("conversations", {}).items():
+                    if cid not in cwd_map:
+                        s = info.get("summary", {})
+                        uris = s.get("WorkspaceURIs", [])
+                        if uris:
+                            cwd_map[cid] = self._uri_to_path(uris[0])
+            except Exception:
+                pass
+
+        return cwd_map
+
+    @staticmethod
+    def _uri_to_path(uris: Any) -> str:
+        """将 workspace_uris (JSON 字符串或列表) 转为路径字符串。"""
+        if not uris:
+            return ""
+        if isinstance(uris, str):
+            try:
+                uris = json.loads(uris)
+            except (json.JSONDecodeError, ValueError):
+                return ""
+        if isinstance(uris, list) and uris:
+            uri = uris[0]
+        elif isinstance(uris, str):
+            uri = uris
+        else:
+            return ""
+        if uri.startswith("file://"):
+            uri = uri[7:]
+        return uri
+
+    def _from_db(self, db_path: Path, conv_id: str,
+                 cwd_map: dict[str, str]) -> list[Prompt]:
+        """从单个会话数据库提取用户输入提示词。"""
+        # 工作目录: 优先用 cwd_map, 找不到则从 trajectory_metadata_blob 读取
+        cwd = cwd_map.get(conv_id, "")
+        if not cwd:
+            cwd = self._cwd_from_trajectory(db_path)
+
+        conn = sqlite3.connect(f"file:{db_path}?immutable=1", uri=True)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT step_payload FROM steps "
+                "WHERE step_type=? ORDER BY idx",
+                (_AG_USER_INPUT_STEP,))
+            out: list[Prompt] = []
+            for (payload,) in cur.fetchall():
+                if not payload:
+                    continue
+                result = self._parse_payload(payload, conv_id, cwd)
+                if result:
+                    out.append(result)
+            return out
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _cwd_from_trajectory(db_path: Path) -> str:
+        """从 trajectory_metadata_blob 表的 field 7 提取工作目录 URI。
+
+        仅在 cwd_map 中找不到对应会话时作为回退使用。
+        """
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?immutable=1", uri=True)
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    'SELECT data FROM trajectory_metadata_blob '
+                    "WHERE id='main' LIMIT 1")
+                row = cur.fetchone()
+                if row and row[0]:
+                    fields = _pb_parse_fields(row[0])
+                    uri = _pb_get_bytes(fields, 7)
+                    if uri:
+                        s = uri.decode("utf-8", errors="replace")
+                        if s.startswith("file://"):
+                            s = s[7:]
+                        return s
+            finally:
+                conn.close()
+        except Exception:
+            pass
+        return ""
+
+    @staticmethod
+    def _parse_payload(payload: bytes, conv_id: str,
+                       cwd: str) -> Prompt | None:
+        """解析 step_payload BLOB, 提取用户文本和时间戳。
+
+        protobuf 结构:
+          field 5 (bytes) > field 1 (bytes) > field 1 (varint) = Unix 秒
+          field 19 (bytes) > field 2 (bytes) = 用户文本
+        """
+        top = _pb_parse_fields(payload)
+
+        # 用户输入载荷在顶层 field 19
+        user_payload = _pb_get_bytes(top, 19)
+        if not user_payload:
+            return None  # 无用户文本 (系统生成的步骤)
+
+        user_fields = _pb_parse_fields(user_payload)
+        user_text = _pb_get_bytes(user_fields, 2)
+
+        # field 2 找不到时, 尝试 field 3 > field 1 (嵌套副本)
+        if not user_text:
+            f3 = _pb_get_bytes(user_fields, 3)
+            if f3:
+                f3_fields = _pb_parse_fields(f3)
+                user_text = _pb_get_bytes(f3_fields, 1)
+
+        if not user_text:
+            return None
+
+        try:
+            text = user_text.decode("utf-8")
+        except (UnicodeDecodeError, AttributeError):
+            return None
+        if not text.strip() or _is_system(text):
+            return None
+
+        # 时间戳: 顶层 field 5 > field 1 > field 1 (Unix 秒)
+        main = _pb_get_bytes(top, 5)
+        ts_seconds = 0
+        if main:
+            main_fields = _pb_parse_fields(main)
+            ts_data = _pb_get_bytes(main_fields, 1)
+            if ts_data:
+                ts_fields = _pb_parse_fields(ts_data)
+                ts_seconds = _pb_get_varint(ts_fields, 1)
+
+        ts = _ts_from_unix(ts_seconds)
+
+        return Prompt("Antigravity", ts, _clean(text), conv_id, cwd)
+
+
+# ---------------------------------------------------------------------------
 # 时间范围解析
 # ---------------------------------------------------------------------------
 
@@ -531,6 +818,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     collectors = [
         CodexCollector(),
         ClaudeCodeCollector(),
+        AntigravityCollector(),
     ]
 
     # 逐个收集; 某个 Agent 失败不影响其他

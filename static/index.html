@@ -180,6 +180,7 @@
   }
   .badge.codex { background: #d8efec; color: #0f766e; }
   .badge.claude { background: #fbeeda; color: #b45309; }
+  .badge.antigravity { background: #e0e7ff; color: #4338ca; }
   .card .meta .session, .card .meta .cwd {
     font-family: var(--mono); font-size: 11px;
     max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -377,6 +378,7 @@ function currentViewMode() {
 function agentClass(agent) {
   if (/codex/i.test(agent)) return "codex";
   if (/claude/i.test(agent)) return "claude";
+  if (/antigravity/i.test(agent)) return "antigravity";
   return "";
 }
 function langFlag(lang) {

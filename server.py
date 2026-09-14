@@ -48,6 +48,7 @@ from fastapi.responses import PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from collect_prompts import (
+    AntigravityCollector,
     ClaudeCodeCollector,
     CodexCollector,
     Prompt,
@@ -492,7 +493,7 @@ def collect_filtered(rng: str) -> tuple[list[Prompt], str, list[str]]:
     except SystemExit as exc:  # _parse_range 对非法值调用 sys.exit
         raise HTTPException(400, f"Invalid range: {exc.code}") from None
 
-    collectors = [CodexCollector(), ClaudeCodeCollector()]
+    collectors = [CodexCollector(), ClaudeCodeCollector(), AntigravityCollector()]
     all_prompts: list[Prompt] = []
     warnings: list[str] = []
     for c in collectors:
