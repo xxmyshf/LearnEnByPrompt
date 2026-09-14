@@ -1,0 +1,1035 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prompt Collector · 提示词收集</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --border: #e2e5ea;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --accent: #0f766e;
+    --accent-dark: #0d5f58;
+    --accent-bg: #e8f4f2;
+    --danger: #b91c1c;
+    --danger-bg: #fef2f2;
+    --en-bg: #f8fafc;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.55 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+
+  /* ---- top bar ---- */
+  .topbar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap;
+    padding: 10px 20px;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .logo {
+    display: grid; place-items: center;
+    width: 34px; height: 34px;
+    background: var(--accent); color: #fff;
+    border-radius: 6px; font-size: 18px;
+  }
+  .brand h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: .2px; }
+  .brand .sub { margin: 0; font-size: 12px; color: var(--muted); }
+  .controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  select, input[type="text"] {
+    height: 32px; padding: 0 10px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: #fff; color: var(--text); font-size: 13px;
+  }
+  input[type="text"] { width: 220px; }
+  input[type="text"]:focus, select:focus, .btn:focus {
+    outline: 2px solid rgba(15,118,110,.35); outline-offset: 1px;
+  }
+
+  /* ---- view toggle ---- */
+  .view-toggle {
+    display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+  }
+  .view-toggle button {
+    height: 32px; padding: 0 12px; border: none; background: #fff;
+    font-size: 12px; cursor: pointer; color: var(--muted);
+    transition: background .15s, color .15s;
+  }
+  .view-toggle button.active { background: var(--accent); color: #fff; }
+  .view-toggle button:hover:not(.active) { background: #f3f4f6; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 32px; padding: 0 14px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: #fff; color: var(--text);
+    font-size: 13px; cursor: pointer;
+    transition: background .15s, border-color .15s;
+  }
+  .btn:hover:not(:disabled) { background: #f3f4f6; }
+  .btn:disabled { opacity: .55; cursor: default; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover:not(:disabled) { background: var(--accent-dark); }
+  .btn.small { height: 26px; padding: 0 10px; font-size: 12px; }
+  .btn .spinner { border-color: rgba(255,255,255,.4); border-top-color: #fff; }
+  .btn:not(.primary) .spinner { border-color: rgba(15,118,110,.25); border-top-color: var(--accent); }
+
+  /* ---- TTS ---- */
+  .btn.tts-btn { border-color: var(--accent); color: var(--accent); }
+  .btn.tts-btn.active { background: var(--accent); color: #fff; }
+ .btn.tts-btn.loading { pointer-events: none; opacity: .7; }
+ .tts-speed-wrap { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted, #888); }
+ .tts-speed-label { white-space: nowrap; }
+ .tts-speed-slider { width: 70px; vertical-align: middle; }
+ .tts-speed-val { min-width: 28px; text-align: right; font-variant-numeric: tabular-nums; color: var(--accent); }
+ .speak-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 20px; flex: none;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: #fff; color: var(--accent);
+    font-size: 13px; cursor: pointer; line-height: 1;
+    transition: background .15s, border-color .15s, color .15s;
+  }
+  .speak-icon:hover { background: var(--accent-bg); border-color: var(--accent); }
+  .speak-icon.playing { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .speak-icon:disabled { opacity: .4; cursor: default; }
+  .text-row { position: relative; }
+  .text-row pre { flex: 1; min-width: 0; }
+  .text-row.tts-active pre { cursor: pointer; }
+  .text-row.tts-active pre:hover { background: #f0f7f5; }
+  .text-row.tts-active .word { cursor: pointer; border-radius: 2px; padding: 0 1px; }
+  .text-row.tts-active .word:hover { background: var(--accent-bg); color: var(--accent-dark); }
+  .lang-flag-right {
+    margin-left: auto; flex: none;
+    font-size: 14px; line-height: 1;
+  }
+
+  .spinner {
+    width: 12px; height: 12px; flex: none;
+    border: 2px solid; border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---- banner ---- */
+  .banner {
+    margin: 12px 20px 0;
+    padding: 9px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    background: var(--danger-bg);
+    color: var(--danger);
+    border: 1px solid #fecaca;
+  }
+
+  main { max-width: 1000px; margin: 0 auto; padding: 16px 20px 40px; }
+
+  /* ---- summary ---- */
+  .summary {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 10px 14px;
+    background: var(--card);
+    border: 1px solid var(--border); border-radius: 6px;
+    font-size: 13px;
+  }
+  .summary .label { font-weight: 600; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 10px;
+    background: var(--accent-bg); color: var(--accent-dark);
+    border-radius: 999px; font-size: 12px;
+  }
+  .chip.plain { background: #eef0f3; color: var(--muted); }
+  .summary .warn { color: #92400e; font-size: 12px; width: 100%; }
+
+  /* ---- day groups & cards ---- */
+  .day-head {
+    display: flex; align-items: baseline; gap: 8px;
+    margin: 22px 0 10px;
+    font-size: 13px; font-weight: 600;
+  }
+  .day-head .count { color: var(--muted); font-weight: 400; }
+  .day-head .rule { flex: 1; border-top: 1px solid var(--border); }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border); border-radius: 6px;
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  .card .meta {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    background: #fafbfc;
+    font-size: 12px; color: var(--muted);
+  }
+  .card .meta .time { font-family: var(--mono); color: var(--text); }
+  .badge {
+    padding: 1px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 600;
+    background: #eef0f3; color: var(--muted);
+  }
+  .badge.codex { background: #d8efec; color: #0f766e; }
+  .badge.claude { background: #fbeeda; color: #b45309; }
+  .card .meta .session, .card .meta .cwd {
+    font-family: var(--mono); font-size: 11px;
+    max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .card .meta .spacer { flex: 1; }
+  .card .meta .copy {
+    border: 1px solid var(--border); background: #fff;
+    border-radius: 4px; padding: 1px 8px;
+    font-size: 11px; color: var(--muted); cursor: pointer;
+  }
+  .card .meta .copy:hover { background: #f3f4f6; color: var(--text); }
+
+  pre.text {
+    margin: 0; padding: 12px 14px;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 260px; overflow: auto;
+  }
+
+  /* ---- english panel ---- */
+  .lang-chip {
+    padding: 1px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 600;
+    background: #eef0f3; color: var(--muted);
+  }
+  .en {
+    border-top: 1px dashed var(--border);
+    background: var(--en-bg);
+  }
+  .en .en-head {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 7px 14px;
+    font-size: 12px; color: var(--muted);
+  }
+  .en .en-title { font-weight: 600; color: var(--text); letter-spacing: .3px; }
+  .en .en-meta { font-family: var(--mono); font-size: 11px; }
+  .en .spacer { flex: 1; }
+  pre.en-text {
+    margin: 0; padding: 0 14px 12px;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 260px; overflow: auto;
+    color: #111827;
+  }
+  .en .empty-hint {
+    padding: 0 14px 12px;
+    font-size: 12px; color: var(--muted);
+  }
+
+  .empty-state {
+    padding: 60px 20px; text-align: center; color: var(--muted);
+    background: var(--card); border: 1px dashed var(--border); border-radius: 6px;
+  }
+
+  footer {
+    max-width: 1000px; margin: 0 auto;
+    padding: 0 20px 28px;
+    font-size: 12px; color: var(--muted);
+  }
+  footer code { font-family: var(--mono); font-size: 11px; }
+
+  @media (max-width: 640px) {
+    .topbar { padding: 10px 12px; }
+    main, footer { padding-left: 12px; padding-right: 12px; }
+    .banner { margin: 12px; }
+    input[type="text"] { width: 150px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">▤</div>
+    <div>
+      <h1>Prompt Collector</h1>
+      <p class="sub">AI Agent 提示词收集 · 中英互译</p>
+    </div>
+  </div>
+  <div class="controls">
+    <select id="rangeSelect" aria-label="时间范围">
+      <option value="day">今天</option>
+      <option value="week">本周</option>
+      <option value="month">本月</option>
+      <option value="all">全部</option>
+      <option value="custom">指定…</option>
+    </select>
+    <input id="customRange" type="text" placeholder="YYYY-MM / YYYY-MM-DD / YYYY-W##" hidden>
+    <button id="refreshBtn" class="btn primary" type="button">
+      <span class="spinner" id="refreshSpinner" hidden></span>刷新收集
+    </button>
+  <button id="translateAllBtn" class="btn" type="button" hidden>全部翻译</button>
+    <div class="view-toggle" id="viewToggle" aria-label="查看模式">
+      <button type="button" data-view="user" class="active">只看用户</button>
+      <button type="button" data-view="all">全部</button>
+    </div>
+    <button id="ttsBtn" class="btn tts-btn" type="button" title="启动/停止 TTS 语音服务">
+      <span class="spinner" id="ttsSpinner" hidden></span>
+     <svg id="ttsIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+       <path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
+     </svg>
+     <span id="ttsLabel">TTS</span>
+   </button>
+    <label id="ttsSpeedWrap" class="tts-speed-wrap" hidden>
+      <span class="tts-speed-label">速度</span>
+      <input id="ttsSpeed" type="range" min="0.5" max="2.0" step="0.1" value="1.0" class="tts-speed-slider">
+      <span id="ttsSpeedVal" class="tts-speed-val">1.0×</span>
+    </label>
+ </div>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<main>
+  <section id="summary" class="summary" hidden></section>
+  <section id="content">
+    <div class="empty-state">加载中…</div>
+  </section>
+</main>
+
+<footer id="footer"></footer>
+
+<script>
+"use strict";
+
+const $ = (s) => document.querySelector(s);
+
+const state = {
+  data: null,          // last /api/prompts response
+  busy: false,         // collecting
+  translatingAll: false,
+  ttsEnabled: false,
+  ttsStarting: false,
+  ttsAudio: null,
+  viewMode: "user",    // "user" = only user prompts (no auto-translate), "all" = auto-translate
+};
+
+const RANGE_LABELS = { day: "今天", week: "本周", month: "本月", all: "全部" };
+
+/* ---------------- helpers ---------------- */
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined && text !== null) node.textContent = text;
+  return node;
+}
+
+function showBanner(msg, isError = true) {
+  const b = $("#banner");
+  b.textContent = msg;
+  b.hidden = !msg;
+  b.style.background = isError ? "var(--danger-bg)" : "var(--accent-bg)";
+  b.style.color = isError ? "var(--danger)" : "var(--accent-dark)";
+  b.style.borderColor = isError ? "#fecaca" : "#b9e2dd";
+}
+
+function setBusy(busy) {
+  state.busy = busy;
+  $("#refreshBtn").disabled = busy;
+  $("#refreshSpinner").hidden = !busy;
+}
+
+function currentRange() {
+  const sel = $("#rangeSelect").value;
+  if (sel !== "custom") return sel;
+  const v = $("#customRange").value.trim();
+  if (!/^\d{4}-\d{2}(-\d{2})?$/.test(v) && !/^\d{4}-W\d{2}$/.test(v)) {
+    showBanner("指定范围格式: YYYY-MM、YYYY-MM-DD 或 YYYY-W##");
+    return null;
+  }
+  return v;
+}
+function currentViewMode() {
+  return state.viewMode;
+}
+
+function agentClass(agent) {
+  if (/codex/i.test(agent)) return "codex";
+  if (/claude/i.test(agent)) return "claude";
+  return "";
+}
+function langFlag(lang) {
+  return lang === "zh" ? "\u{1F1E8}\u{1F1F3}" : lang === "en" ? "\u{1F1EC}\u{1F1E7}" : "\u{1F310}";
+}
+function langName(lang) {
+  return lang === "zh" ? "\u4e2d\u6587" : lang === "en" ? "English" : "";
+}
+
+function fmtLatency(ms) {
+  return ms == null ? "" : (ms >= 1000 ? (ms / 1000).toFixed(1) + "s" : ms + "ms");
+}
+
+function fmtTranslatedAt(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleString("zh-CN", { hour12: false });
+}
+
+function hasCJK(text) {
+  return /[\u4e00-\u9fff\u3400-\u4dbf]/.test(text || "");
+}
+
+function speakerSvg() {
+  return '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>';
+}
+
+function stopSvg() {
+  return '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+}
+
+function stopTtsAudio() {
+  if (state.ttsAudio) {
+    if (state.ttsAudio.pause) state.ttsAudio.pause();
+    if (state.ttsAudio.currentTime !== undefined) state.ttsAudio.currentTime = 0;
+    state.ttsAudio = null;
+  }
+  document.querySelectorAll(".speak-icon.playing").forEach((el) => {
+    el.classList.remove("playing");
+    el.innerHTML = speakerSvg();
+  });
+}
+
+async function speakText(text, btn) {
+  if (!state.ttsEnabled) return;
+  if (btn.classList.contains("playing")) { stopTtsAudio(); return; }
+  stopTtsAudio();
+  btn.classList.add("playing");
+  btn.innerHTML = stopSvg();
+
+  if (hasCJK(text)) {
+    if (!("speechSynthesis" in window)) {
+      showBanner("浏览器不支持语音合成");
+      btn.classList.remove("playing");
+      btn.innerHTML = speakerSvg();
+      return;
+    }
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "zh-CN";
+    utter.rate = parseFloat($("#ttsSpeed").value);
+    utter.onend = () => { btn.classList.remove("playing"); btn.innerHTML = speakerSvg(); };
+    utter.onerror = () => { btn.classList.remove("playing"); btn.innerHTML = speakerSvg(); };
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utter);
+    state.ttsAudio = { pause: () => window.speechSynthesis.cancel(), currentTime: 0 };
+    return;
+  }
+
+ try {
+    const speed = parseFloat($("#ttsSpeed").value);
+    const res = await fetch("/api/tts/synthesize?text=" + encodeURIComponent(text) + "&speed=" + speed);
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(detail.slice(0, 200));
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    state.ttsAudio = audio;
+    audio.onended = () => { btn.classList.remove("playing"); btn.innerHTML = speakerSvg(); URL.revokeObjectURL(url); };
+    audio.onerror = () => { btn.classList.remove("playing"); btn.innerHTML = speakerSvg(); URL.revokeObjectURL(url); };
+    audio.play();
+  } catch (err) {
+    showBanner("TTS 播放失败: " + err.message);
+    btn.classList.remove("playing");
+    btn.innerHTML = speakerSvg();
+  }
+}
+
+function makeSpeakBtn(text) {
+  const btn = el("button", "speak-icon");
+  btn.type = "button";
+  btn.title = "点击朗读";
+  btn.innerHTML = speakerSvg();
+  btn.addEventListener("click", (e) => { e.stopPropagation(); speakText(text, btn); });
+  return btn;
+}
+
+function updateTTSButton() {
+  const btn = $("#ttsBtn");
+  const label = $("#ttsLabel");
+  const spinner = $("#ttsSpinner");
+  btn.classList.toggle("active", state.ttsEnabled);
+  btn.classList.toggle("loading", state.ttsStarting);
+  spinner.hidden = !state.ttsStarting;
+  label.textContent = state.ttsStarting ? "启动中" : state.ttsEnabled ? "TTS 开" : "TTS";
+  $("#ttsSpeedWrap").hidden = !state.ttsEnabled;
+}
+
+async function toggleTTS() {
+  if (state.ttsStarting) return;
+  if (state.ttsEnabled) {
+    stopTtsAudio();
+    try { await fetch("/api/tts/stop", { method: "POST" }); } catch {}
+    state.ttsEnabled = false;
+    updateTTSButton();
+    reRenderCards();
+    return;
+  }
+  state.ttsStarting = true;
+  updateTTSButton();
+  showBanner("正在启动 Matcha-TTS 服务，需下载模型，请稍候...", false);
+  try {
+    const res = await fetch("/api/tts/start", { method: "POST" });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(detail.slice(0, 300));
+    }
+    state.ttsEnabled = true;
+    showBanner("");
+    reRenderCards();
+  } catch (err) {
+    showBanner("TTS 启动失败: " + err.message);
+  } finally {
+    state.ttsStarting = false;
+    updateTTSButton();
+  }
+}
+
+function reRenderCards() {
+  const data = state.data;
+  if (!data || !data.prompts || !data.prompts.length) return;
+  const content = $("#content");
+  content.innerHTML = "";
+  const byDay = new Map();
+  for (const p of data.prompts) {
+    if (!byDay.has(p.date)) byDay.set(p.date, []);
+    byDay.get(p.date).push(p);
+  }
+  for (const [date, items] of byDay) {
+    const head = el("div", "day-head");
+    head.append(el("span", "", date), el("span", "count", items.length + " 条"), el("span", "rule"));
+    content.append(head);
+    for (const p of items) content.append(renderCard(p));
+  }
+}
+
+/* ---------------- data ---------------- */
+
+async function loadPrompts() {
+  const rng = currentRange();
+  if (rng === null) return;
+  setBusy(true);
+  showBanner("");
+  let ok = false;
+  try {
+    const params = new URLSearchParams({ range: rng, user_only: state.viewMode === "user" });
+    const res = await fetch("/api/prompts?" + params);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error("HTTP " + res.status + (body ? ": " + body.slice(0, 200) : ""));
+    }
+    state.data = await res.json();
+    render();
+    ok = true;
+  } catch (err) {
+    showBanner("收集失败: " + err.message);
+  } finally {
+    setBusy(false);
+  }
+  if (ok) {
+    const pending = (state.data.prompts || []).filter((p) => !p.translation).length;
+    if (pending > 0 && !state.translatingAll && state.viewMode === "all") {
+      translateAll();
+    }
+  }
+}
+
+/* ---------------- render ---------------- */
+
+function render() {
+  const data = state.data;
+  const content = $("#content");
+  content.innerHTML = "";
+
+  /* summary bar */
+  const summary = $("#summary");
+  summary.innerHTML = "";
+  summary.hidden = false;
+  summary.append(el("span", "label", data.label || ""));
+  summary.append(el("span", "chip", data.total + " 条提示词"));
+  for (const [agent, n] of Object.entries(data.by_agent || {})) {
+    summary.append(el("span", "chip plain", agent + " " + n));
+  }
+  const days = Object.keys(data.by_day || {});
+  if (days.length) summary.append(el("span", "chip plain", days.length + " 天"));
+  summary.append(el("span", "chip plain", "已翻译 " + (data.translated || 0) + "/" + data.total));
+  for (const w of data.warnings || []) summary.append(el("div", "warn", "⚠ " + w));
+
+  /* prompts */
+  const prompts = data.prompts || [];
+  if (!prompts.length) {
+    content.append(el("div", "empty-state", "该时间范围内没有收集到提示词。"));
+    $("#translateAllBtn").hidden = true;
+    return;
+  }
+
+  const byDay = new Map();
+  for (const p of prompts) {
+    if (!byDay.has(p.date)) byDay.set(p.date, []);
+    byDay.get(p.date).push(p);
+  }
+
+  for (const [date, items] of byDay) {
+    const head = el("div", "day-head");
+    head.append(el("span", "", date), el("span", "count", items.length + " 条"), el("span", "rule"));
+    content.append(head);
+    for (const p of items) content.append(renderCard(p));
+  }
+
+  /* translate-all button */
+  const pending = prompts.filter((p) => !p.translation).length;
+  const allBtn = $("#translateAllBtn");
+  allBtn.hidden = pending === 0;
+  allBtn.disabled = state.translatingAll;
+  allBtn.textContent = state.translatingAll ? "翻译中…" : "全部翻译 (" + pending + ")";
+}
+
+function renderCard(p) {
+  const card = el("article", "card");
+  card.dataset.id = p.id;
+
+  /* meta row */
+  const meta = el("div", "meta");
+  meta.append(el("span", "time", p.time));
+  const badge = el("span", "badge " + agentClass(p.agent), p.agent);
+  meta.append(badge);
+  const sess = el("span", "session", "sess " + (p.session || "").slice(0, 12));
+  sess.title = p.session || "";
+  meta.append(sess);
+  if (p.cwd) {
+    const cwd = el("span", "cwd", p.cwd);
+    cwd.title = p.cwd;
+    meta.append(cwd);
+  }
+  meta.append(el("span", "spacer"));
+  const copyBtn = el("button", "copy", "复制原文");
+  copyBtn.type = "button";
+  copyBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(p.text);
+      copyBtn.textContent = "已复制";
+      setTimeout(() => (copyBtn.textContent = "复制原文"), 1200);
+    } catch {
+      copyBtn.textContent = "复制失败";
+      setTimeout(() => (copyBtn.textContent = "复制原文"), 1200);
+    }
+  });
+  meta.append(copyBtn);
+  /* TTS play button in meta row */
+  if (state.ttsEnabled) meta.append(makeSpeakBtn(p.text));
+  /* flag at far right */
+  if (p.src_lang) {
+    meta.append(el("span", "lang-chip lang-flag-right", langFlag(p.src_lang)));
+  }
+  card.append(meta);
+
+  /* original text */
+  const origRow = el("div", "text-row" + (state.ttsEnabled ? " tts-active" : ""));
+  const origPre = el("pre", "text");
+  if (state.ttsEnabled) {
+    origPre.append(makeWordSpans(p.text, card, "orig"));
+    origPre.addEventListener("click", (e) => {
+      if (e.target === origPre) speakText(p.text, card.querySelector(".meta .speak-icon"));
+    });
+  } else {
+    origPre.textContent = p.text;
+  }
+  origRow.append(origPre);
+  card.append(origRow);
+
+  /* english panel */
+  card.append(renderEnPanel(p));
+  return card;
+}
+
+function renderEnPanel(p) {
+  const box = el("div", "en");
+  const head = el("div", "en-head");
+
+  /* For untranslated items, translate button goes first (left side) */
+  let btnFirst = null;
+  if (!p.translation) {
+    btnFirst = el("button", "btn small", "译为" + langName(p.tgt_lang));
+    btnFirst.type = "button";
+    btnFirst.append(el("span", "spinner"));
+    btnFirst.querySelector(".spinner").hidden = true;
+    head.append(btnFirst);
+  }
+  head.append(el("span", "en-title", langName(p.tgt_lang)));
+  if (p.translation && p.translation_meta) {
+    const m = p.translation_meta;
+    const parts = [];
+    if (m.model) parts.push(m.model);
+    if (m.translated_at) parts.push(fmtTranslatedAt(m.translated_at));
+    if (m.latency_ms != null) parts.push(fmtLatency(m.latency_ms));
+    head.append(el("span", "en-meta", parts.join(" · ")));
+  }
+  head.append(el("span", "spacer"));
+
+  /* For translated items, re-translate button */
+  const btn = p.translation
+    ? el("button", "btn small", "重新翻译")
+    : null;
+  if (btn) {
+    btn.type = "button";
+    btn.append(el("span", "spinner"));
+    btn.querySelector(".spinner").hidden = true;
+  }
+  const spinner = btn ? btn.querySelector(".spinner") : null;
+
+  let body;
+  if (p.translation) {
+    body = el("div", "text-row" + (state.ttsEnabled ? " tts-active" : ""));
+    const enPre = el("pre", "en-text");
+    if (state.ttsEnabled) {
+      enPre.append(makeWordSpans(p.translation, null, "en"));
+      enPre.addEventListener("click", (e) => {
+        if (e.target === enPre) {
+          const cardEl = enPre.closest(".card");
+          speakText(p.translation, cardEl.querySelector(".en-head .speak-icon"));
+        }
+      });
+    } else {
+      enPre.textContent = p.translation;
+    }
+    body.append(enPre);
+  } else {
+    body = el("div", "text-row");
+    const hint = el("div", "empty-hint", "尚未翻译 — 点击左上方按钮翻译。");
+    hint.style.flex = "1";
+    body.append(hint);
+  }
+
+  /* wire up translate buttons */
+  const onTranslate = () => translateOne(p, box, body, spinner);
+  if (btnFirst) btnFirst.addEventListener("click", onTranslate);
+  if (btn) {
+    btn.addEventListener("click", onTranslate);
+    head.append(btn);
+  }
+  /* speak button (translated + TTS enabled) */
+  if (p.translation && state.ttsEnabled) {
+    const speakBtn = el("button", "speak-icon");
+    speakBtn.type = "button";
+    speakBtn.title = "点击朗读";
+    speakBtn.innerHTML = speakerSvg();
+    speakBtn.addEventListener("click", (e) => { e.stopPropagation(); speakText(p.translation, speakBtn); });
+    head.append(speakBtn);
+  }
+  /* flag at far right */
+  if (p.tgt_lang) {
+    head.append(el("span", "lang-chip lang-flag-right", langFlag(p.tgt_lang)));
+  }
+  box.append(head, body);
+  return box;
+}
+
+function makeWordSpans(text, card, which) {
+  const frag = document.createDocumentFragment();
+  const re = /(\s+)|([\w'\u2019-]+|[\u4e00-\u9fff]|[^\s])/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m[1]) {
+      frag.appendChild(document.createTextNode(m[1]));
+    } else {
+      const word = m[2];
+      const span = el("span", "word", word);
+      span.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const cardEl = span.closest(".card");
+        const sel = which === "orig" ? ".meta .speak-icon" : ".en-head .speak-icon";
+        speakText(word, cardEl.querySelector(sel));
+      });
+      frag.appendChild(span);
+    }
+  }
+  return frag;
+}
+
+
+/* ---------------- translation ---------------- */
+
+async function translateOne(p, box, body, spinner) {
+  if (state.busy) return;
+  const head = box.querySelector(".en-head");
+  const allBtns = head.querySelectorAll(".btn");
+  allBtns.forEach(b => { b.disabled = true; });
+  if (spinner) spinner.hidden = false;
+  allBtns.forEach(b => { if (b.childNodes[0]) b.childNodes[0].textContent = "翻译中…"; });
+  showBanner("");
+  try {
+    const res = await fetch("/api/prompts/" + p.id + "/translate", { method: "POST" });
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => "");
+      let detail = "HTTP " + res.status;
+      try {
+        const j = JSON.parse(bodyText);
+        if (j.detail) detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+      } catch { /* not json */ }
+      throw new Error(detail);
+    }
+    const rec = await res.json();
+    p.translation = rec.translation || rec.en;
+    p.translation_meta = {
+      model: rec.model,
+      translated_at: rec.translated_at,
+      latency_ms: rec.latency_ms,
+    };
+    /* rebuild body with new translation text */
+    const newBody = el("div", "text-row" + (state.ttsEnabled ? " tts-active" : ""));
+    const enPre = el("pre", "en-text");
+    const text = rec.translation || rec.en;
+    if (state.ttsEnabled) {
+      const cardEl = box.closest(".card");
+      enPre.append(makeWordSpans(text, cardEl, "en"));
+      enPre.addEventListener("click", (e) => {
+        if (e.target === enPre) speakText(text, cardEl.querySelector(".en-head .speak-icon"));
+      });
+    } else {
+      enPre.textContent = text;
+    }
+    newBody.append(enPre);
+    body.replaceWith(newBody);
+    /* rebuild head: remove translate-first button, add re-translate + meta + speak */
+    head.innerHTML = "";
+    head.append(el("span", "en-title", langName(p.tgt_lang)));
+    const parts = [];
+    if (rec.model) parts.push(rec.model);
+    if (rec.translated_at) parts.push(fmtTranslatedAt(rec.translated_at));
+    if (rec.latency_ms != null) parts.push(fmtLatency(rec.latency_ms));
+    head.append(el("span", "en-meta", parts.join(" · ")));
+    head.append(el("span", "spacer"));
+    const retryBtn = el("button", "btn small", "重新翻译");
+    retryBtn.type = "button";
+    retryBtn.append(el("span", "spinner"));
+    retryBtn.querySelector(".spinner").hidden = true;
+    retryBtn.addEventListener("click", () => translateOne(p, box, newBody, retryBtn.querySelector(".spinner")));
+    head.append(retryBtn);
+    if (state.ttsEnabled) {
+      const speakBtn = el("button", "speak-icon");
+      speakBtn.type = "button";
+      speakBtn.title = "点击朗读";
+      speakBtn.innerHTML = speakerSvg();
+      speakBtn.addEventListener("click", (e) => { e.stopPropagation(); speakText(text, speakBtn); });
+      head.append(speakBtn);
+    }
+    if (p.tgt_lang) head.append(el("span", "lang-chip lang-flag-right", langFlag(p.tgt_lang)));
+    /* refresh translate-all counter */
+    if (state.data) {
+      const pending = state.data.prompts.filter((x) => !x.translation).length;
+      const allBtn = $("#translateAllBtn");
+      if (!state.translatingAll) {
+        allBtn.hidden = pending === 0;
+        allBtn.textContent = "全部翻译 (" + pending + ")";
+      }
+    }
+  } catch (err) {
+    showBanner("翻译失败: " + err.message);
+    allBtns.forEach(b => { if (b.childNodes[0]) b.childNodes[0].textContent = "重试翻译"; });
+  } finally {
+    allBtns.forEach(b => { b.disabled = false; });
+    if (spinner) spinner.hidden = true;
+  }
+}
+
+async function translateAll() {
+  const data = state.data;
+  if (!data || state.translatingAll) return;
+  state.translatingAll = true;
+  const allBtn = $("#translateAllBtn");
+  allBtn.disabled = true;
+  showBanner("");
+
+  const pending = data.prompts.filter((p) => !p.translation);
+  let done = 0;
+  let failed = 0;
+  for (const p of pending) {
+    allBtn.textContent = "翻译中 " + (done + 1) + "/" + pending.length + "…";
+    const card = document.querySelector('.card[data-id="' + p.id + '"]');
+    const box = card ? card.querySelector(".en") : null;
+    const btns = box ? box.querySelectorAll(".en-head .btn") : [];
+    const spinner = box ? box.querySelector(".en-head .btn .spinner") : null;
+    const bodyEl = box ? box.querySelector(".en-text, .empty-hint") : null;
+    if (btns.length) {
+      btns.forEach(b => { b.disabled = true; });
+      if (spinner) spinner.hidden = false;
+      btns.forEach(b => { if (b.childNodes[0]) b.childNodes[0].textContent = "翻译中…"; });
+    }
+    try {
+      const res = await fetch("/api/prompts/" + p.id + "/translate", { method: "POST" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const rec = await res.json();
+      p.translation = rec.translation || rec.en;
+      p.translation_meta = {
+        model: rec.model,
+        translated_at: rec.translated_at,
+        latency_ms: rec.latency_ms,
+      };
+      if (box && bodyEl) {
+        /* rebuild body */
+        const newBody = el("div", "text-row" + (state.ttsEnabled ? " tts-active" : ""));
+        const enPre = el("pre", "en-text");
+        const text = rec.translation || rec.en;
+        if (state.ttsEnabled) {
+          enPre.append(makeWordSpans(text, card, "en"));
+          enPre.addEventListener("click", (e) => {
+            if (e.target === enPre) speakText(text, card.querySelector(".en-head .speak-icon"));
+          });
+        } else {
+          enPre.textContent = text;
+        }
+        newBody.append(enPre);
+        /* rebuild head */
+        const head = box.querySelector(".en-head");
+        head.innerHTML = "";
+        head.append(el("span", "en-title", langName(p.tgt_lang)));
+        const parts = [];
+        if (rec.model) parts.push(rec.model);
+        if (rec.translated_at) parts.push(fmtTranslatedAt(rec.translated_at));
+        if (rec.latency_ms != null) parts.push(fmtLatency(rec.latency_ms));
+        head.append(el("span", "en-meta", parts.join(" · ")));
+        head.append(el("span", "spacer"));
+        const retryBtn = el("button", "btn small", "重新翻译");
+        retryBtn.type = "button";
+        retryBtn.append(el("span", "spinner"));
+        retryBtn.querySelector(".spinner").hidden = true;
+        retryBtn.addEventListener("click", () => translateOne(p, box, newBody, retryBtn.querySelector(".spinner")));
+        head.append(retryBtn);
+        if (state.ttsEnabled) {
+          const speakBtn = el("button", "speak-icon");
+          speakBtn.type = "button";
+          speakBtn.title = "点击朗读";
+          speakBtn.innerHTML = speakerSvg();
+          speakBtn.addEventListener("click", (e) => { e.stopPropagation(); speakText(text, speakBtn); });
+          head.append(speakBtn);
+        }
+        if (p.tgt_lang) head.append(el("span", "lang-chip lang-flag-right", langFlag(p.tgt_lang)));
+        bodyEl.replaceWith(newBody);
+      }
+      done++;
+    } catch (err) {
+      failed++;
+      btns.forEach(b => { if (b.childNodes[0]) b.childNodes[0].textContent = "重试翻译"; });
+    } finally {
+      btns.forEach(b => { b.disabled = false; });
+      if (spinner) spinner.hidden = true;
+    }
+  }
+
+  state.translatingAll = false;
+  const pendingLeft = data.prompts.filter((x) => !x.translation).length;
+  allBtn.disabled = false;
+  allBtn.hidden = pendingLeft === 0;
+  allBtn.textContent = "全部翻译 (" + pendingLeft + ")";
+  showBanner(failed ? "批量翻译完成: 成功 " + done + ", 失败 " + failed : "批量翻译完成: 成功 " + done, failed > 0);
+}
+
+/* ---------------- footer / health ---------------- */
+
+async function loadFooter() {
+  try {
+    const res = await fetch("/api/health");
+    if (!res.ok) return;
+    const h = await res.json();
+    const t = h.translate || {};
+    const model = t.models && t.models.length ? t.models[0] : "未知";
+    const status = t.ok ? "在线" : "不可达";
+    const tts = h.tts || {};
+    const ttsStatus = tts.ok ? "TTS 在线" : tts.running ? "TTS 启动中" : "TTS 未启动";
+    $("#footer").textContent =
+      "翻译服务 " + status + " · 模型 " + model + " · 已记录翻译 " + h.recorded_translations + " 条";
+    $("#footer").textContent += " · " + ttsStatus;
+  } catch {
+    $("#footer").textContent = "";
+  }
+}
+
+/* ---------------- events & init ---------------- */
+
+$("#refreshBtn").addEventListener("click", loadPrompts);
+$("#translateAllBtn").addEventListener("click", translateAll);
+$("#ttsBtn").addEventListener("click", toggleTTS);
+$("#ttsSpeed").addEventListener("input", () => { $("#ttsSpeedVal").textContent = parseFloat($("#ttsSpeed").value).toFixed(1) + "×"; });
+
+$("#viewToggle").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-view]");
+  if (!btn) return;
+  const mode = btn.dataset.view;
+  if (state.viewMode === mode) return;
+  state.viewMode = mode;
+  $("#viewToggle").querySelectorAll("button").forEach((b) => {
+    b.classList.toggle("active", b === btn);
+  });
+  loadPrompts();
+});
+
+$("#rangeSelect").addEventListener("change", () => {
+  const custom = $("#rangeSelect").value === "custom";
+  $("#customRange").hidden = !custom;
+  if (!custom) loadPrompts();
+});
+$("#customRange").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") loadPrompts();
+});
+
+loadFooter();
+loadPrompts();
+
+/* Auto-start TTS on page load */
+(async () => {
+  try {
+    const res = await fetch("/api/health");
+    if (res.ok) {
+      const h = await res.json();
+      const tts = h.tts || {};
+      if (!tts.ok) {
+        /* TTS not running, start it */
+        state.ttsStarting = true;
+        updateTTSButton();
+        showBanner("正在启动 Matcha-TTS 服务…", false);
+        try {
+          const sr = await fetch("/api/tts/start", { method: "POST" });
+          if (sr.ok) {
+            state.ttsEnabled = true;
+            showBanner("");
+          } else {
+            const detail = await sr.text().catch(() => "");
+            showBanner("TTS 自动启动失败: " + detail.slice(0, 200));
+          }
+        } catch (err) {
+          showBanner("TTS 自动启动失败: " + err.message);
+        } finally {
+          state.ttsStarting = false;
+          updateTTSButton();
+          reRenderCards();
+        }
+      } else {
+        /* TTS already running */
+        state.ttsEnabled = true;
+        updateTTSButton();
+        reRenderCards();
+      }
+    }
+  } catch {}
+})();
+</script>
+</body>
+</html>
