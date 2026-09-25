@@ -158,6 +158,29 @@
   .day-head .count { color: var(--muted); font-weight: 400; }
   .day-head .rule { flex: 1; border-top: 1px solid var(--border); }
 
+  /* ---- custom scrollbar for text blocks ---- */
+  pre.text::-webkit-scrollbar,
+  pre.en-text::-webkit-scrollbar {
+    width: 8px;
+  }
+  pre.text::-webkit-scrollbar-track,
+  pre.en-text::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  pre.text::-webkit-scrollbar-thumb,
+  pre.en-text::-webkit-scrollbar-thumb {
+    background: #c1c5ca;
+    border-radius: 4px;
+  }
+  pre.text::-webkit-scrollbar-thumb:hover,
+  pre.en-text::-webkit-scrollbar-thumb:hover {
+    background: #a1a5aa;
+  }
+  pre.text {
+    scrollbar-width: thin;
+    scrollbar-color: #c1c5ca transparent;
+  }
+
   .card {
     background: var(--card);
     border: 1px solid var(--border); border-radius: 6px;
@@ -197,7 +220,7 @@
     margin: 0; padding: 12px 14px;
     font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
     white-space: pre-wrap; word-break: break-word;
-    max-height: 260px; overflow: auto;
+    max-height: 400px; overflow-y: auto; overflow-x: hidden;
   }
 
   /* ---- english panel ---- */
@@ -239,7 +262,9 @@
     margin: 0; padding: 0 14px 12px;
     font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
     white-space: pre-wrap; word-break: break-word;
-    max-height: 260px; overflow: auto;
+    max-height: 400px; overflow-y: auto; overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: #c1c5ca transparent;
     color: #111827;
   }
   .en .empty-hint {
