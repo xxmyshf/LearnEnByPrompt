@@ -756,7 +756,8 @@ async function translateOne(p, box, body, spinner) {
   if (flag) { flag.style.opacity = ".5"; flag.textContent = "…"; }
   showBanner("");
   try {
-    const res = await fetch("/api/prompts/" + p.id + "/translate", { method: "POST" });
+    const reTranslate = p.translation ? "?force=true" : "";
+    const res = await fetch("/api/prompts/" + p.id + "/translate" + reTranslate, { method: "POST" });
     if (!res.ok) {
       const bodyText = await res.text().catch(() => "");
       let detail = "HTTP " + res.status;
@@ -823,7 +824,8 @@ async function translateAll() {
     const flag = box ? box.querySelector(".card-overlay .lang-chip") : null;
     if (flag) { flag.style.opacity = ".5"; flag.textContent = "…"; }
     try {
-      const res = await fetch("/api/prompts/" + p.id + "/translate", { method: "POST" });
+      const forceQ = p.translation ? "?force=true" : "";
+      const res = await fetch("/api/prompts/" + p.id + "/translate" + forceQ, { method: "POST" });
       if (!res.ok) throw new Error("HTTP " + res.status);
       const rec = await res.json();
       p.translation = rec.translation || rec.en;
