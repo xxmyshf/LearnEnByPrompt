@@ -637,6 +637,8 @@ def _parse_range(rng: str) -> tuple[datetime, datetime, str]:
 
     支持的格式:
       "day"/"today"/""  -- 今天 00:00 到明天 00:00
+      "yesterday"      -- 昨天 00:00 到今天 00:00
+      "day_before_yesterday" -- 前天 00:00 到昨天 00:00
       "week"            -- 本周一到下周一 (ISO 周)
       "month"           -- 本月 1 号到下月 1 号
       "all"             -- 1970 到现在
@@ -655,6 +657,15 @@ def _parse_range(rng: str) -> tuple[datetime, datetime, str]:
 
     if rng in ("day", "today", ""):
         return today_start, today_end, today_start.strftime("%Y-%m-%d")
+
+    if rng == "yesterday":
+        y_start = today_start - timedelta(days=1)
+        return y_start, today_start, y_start.strftime("%Y-%m-%d")
+
+    if rng == "day_before_yesterday":
+        y2_start = today_start - timedelta(days=2)
+        y2_end = today_start - timedelta(days=1)
+        return y2_start, y2_end, y2_start.strftime("%Y-%m-%d")
 
     if rng == "week":
         # weekday() 返回 0=周一, 回退到本周一

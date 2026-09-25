@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Prompt Collector · 提示词收集</title>
+<title>提示词翻译</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>译</text></svg>">
 <style>
   :root {
     --bg: #f5f6f8;
@@ -298,13 +299,15 @@
   <div class="brand">
     <div class="logo">▤</div>
     <div>
-      <h1>Prompt Collector</h1>
+      <h1>提示词翻译</h1>
       <p class="sub">AI Agent 提示词收集 · 中英互译</p>
     </div>
   </div>
   <div class="controls">
     <select id="rangeSelect" aria-label="时间范围">
       <option value="day">今天</option>
+      <option value="yesterday">昨天</option>
+      <option value="day_before_yesterday">前天</option>
       <option value="week">本周</option>
       <option value="month">本月</option>
       <option value="all">全部</option>
@@ -360,7 +363,7 @@ const state = {
   viewMode: "user",    // "user" = only user prompts (no auto-translate), "all" = auto-translate
 };
 
-const RANGE_LABELS = { day: "今天", week: "本周", month: "本月", all: "全部" };
+const RANGE_LABELS = { day: "今天", yesterday: "昨天", day_before_yesterday: "前天", week: "本周", month: "本月", all: "全部" };
 
 /* ---------------- helpers ---------------- */
 
